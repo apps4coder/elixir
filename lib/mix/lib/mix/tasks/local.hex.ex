@@ -1,13 +1,16 @@
 defmodule Mix.Tasks.Local.Hex do
   use Mix.Task
 
-  @hex_url "https://hex.pm/installs/hex.ez"
-  @hex_requirement ">= 0.5.0"
+  @hex_s3                   "https://s3.amazonaws.com/s3.hex.pm"
+  @hex_list_url             @hex_s3 <> "/installs/list.csv"
+  @hex_archive_url          @hex_s3 <> "/installs/[VERSION]/hex.ez"
+  @hex_archive_version_url  @hex_s3 <> "/installs/[VERSION]/hex.ez"
+  @hex_requirement          ">= 0.5.0"
 
   @shortdoc "Install hex locally"
 
   @moduledoc """
-  Install hex locally from #{@hex_url}.
+  Install hex locally from #{@hex_archive_url}.
 
       mix local.hex
 
@@ -18,7 +21,14 @@ defmodule Mix.Tasks.Local.Hex do
   """
   @spec run(OptionParser.argv) :: boolean
   def run(args) do
-    url = @hex_url <> "?elixir=" <> System.version
+    version = get_matching_version()
+
+    if version do
+      url = String.replace(@hex_archive_version_url, "[VERSION]", version)
+    else
+      url = @hex_archive_url
+    end
+
     Mix.Tasks.Archive.Install.run [url, "--shell" | args]
   end
 
@@ -74,5 +84,26 @@ defmodule Mix.Tasks.Local.Hex do
                         "`mix local.hex` or uninstalling it with `mix archive.uninstall hex.ez`"
         :erlang.raise(kind, reason, stacktrace)
     end
+  end
+
+  defp get_matching_version do
+    Mix.Utils.read_path!(@hex_list_url)
+    |> parse_csv
+    |> calculate_version(System.version)
+  end
+
+  defp parse_csv(body) do
+    :binary.split(body, "\n", [:global, :trim])
+    |> Enum.flat_map(fn line ->
+         [_hex|elixirs] = :binary.split(line, ",", [:global, :trim])
+         elixirs
+       end)
+    |> Enum.uniq
+  end
+
+  defp calculate_version(versions, current) do
+    {:ok, current} = Version.parse(current)
+    all_eligible = Enum.filter(versions, &Version.compare(&1, current) != :gt)
+    List.last(all_eligible)
   end
 end
